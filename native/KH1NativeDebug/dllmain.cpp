@@ -154,6 +154,31 @@ static void DrawForm() {
         ReleaseSRWLockExclusive(&g_lock);
     }
 
+    ImGui::Separator();
+    static char textBoxText[128] = "TEST TEXT BOX";
+    static int textBoxWindowId = 1;
+    ImGui::InputText("Text Box Text", textBoxText, sizeof(textBoxText));
+    ImGui::InputInt("Window ID", &textBoxWindowId);
+    if (textBoxWindowId < 0) textBoxWindowId = 0;
+    if (textBoxWindowId > 3) textBoxWindowId = 3;
+
+    if (ImGui::Button("Open Text Box", ImVec2(160, 0))) {
+        AcquireSRWLockExclusive(&g_lock);
+        strncpy_s(g_debugAction, "open_text_box", _TRUNCATE);
+        strncpy_s(g_debugParamText, textBoxText, _TRUNCATE);
+        g_debugParam1 = textBoxWindowId;
+        g_debugActionPending = true;
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close Text Box", ImVec2(160, 0))) {
+        AcquireSRWLockExclusive(&g_lock);
+        strncpy_s(g_debugAction, "close_text_box", _TRUNCATE);
+        g_debugParam1 = textBoxWindowId;
+        g_debugActionPending = true;
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+
     char result[256];
     AcquireSRWLockExclusive(&g_lock);
     strncpy_s(result, g_debugResult, _TRUNCATE);

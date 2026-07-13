@@ -36,5 +36,11 @@ function _OnFrame()
 	elseif action.action == "show_custom_popup" then
 		local ok = kh1_lib.show_custom_item_popup(action.param_text)
 		kh1_debug.set_debug_result("show_custom_item_popup(\"" .. action.param_text .. "\") = " .. tostring(ok))
+	elseif action.action == "open_text_box" then
+		local ok = kh1_lib.open_text_box(action.param_text, action.param1)
+		kh1_debug.set_debug_result("open_text_box(\"" .. action.param_text .. "\", " .. action.param1 .. ") = " .. tostring(ok))
+	elseif action.action == "close_text_box" then
+		local ok = kh1_lib.close_text_box(action.param1)
+		kh1_debug.set_debug_result("close_text_box(" .. action.param1 .. ") = " .. tostring(ok))
 	end
 end
