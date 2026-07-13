@@ -117,6 +117,14 @@ static LRESULT CALLBACK FormWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
+    case WM_GETMINMAXINFO: {
+        // Keeps the two-pane list/detail layout from collapsing into an
+        // unusable sliver if the window gets shrunk.
+        MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
+        mmi->ptMinTrackSize.x = 640;
+        mmi->ptMinTrackSize.y = 420;
+        return 0;
+    }
     case WM_SIZE:
         if (g_swapChain && wParam != SIZE_MINIMIZED) {
             if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
@@ -128,112 +136,205 @@ static LRESULT CALLBACK FormWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     return DefWindowProcA(hwnd, msg, wParam, lParam);
 }
 
+// --- STYLE ---
+// Applied once after ImGui::CreateContext(). Purely cosmetic -- the point is
+// to make the fullscreen-docked layout below (list + detail pane) read as one
+// coherent app surface rather than default ImGui demo styling.
+static void ApplyImGuiStyle() {
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 0.0f;
+    style.ChildRounding = 6.0f;
+    style.FrameRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.ScrollbarRounding = 6.0f;
+    style.WindowPadding = ImVec2(14, 14);
+    style.FramePadding = ImVec2(8, 6);
+    style.ItemSpacing = ImVec2(8, 8);
+    style.ScrollbarSize = 14.0f;
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.14f, 0.14f, 0.17f, 1.00f);
+    colors[ImGuiCol_Border] = ImVec4(0.25f, 0.25f, 0.30f, 0.60f);
+    colors[ImGuiCol_Header] = ImVec4(0.20f, 0.45f, 0.75f, 0.55f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.55f, 0.85f, 0.75f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.25f, 0.55f, 0.85f, 1.00f);
+    colors[ImGuiCol_Button] = ImVec4(0.20f, 0.35f, 0.55f, 1.00f);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.45f, 0.70f, 1.00f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.20f, 0.55f, 0.85f, 1.00f);
+}
+
+// --- FUNCTION REGISTRY ---
+// One row per queueable debug action. Drives the left-hand list; DrawForm's
+// detail pane still switches on `id` to render that action's specific fields,
+// but adding an entry here is what makes a new action show up in the list at
+// all (grouped under `category`, in array order).
+struct DebugFunctionEntry {
+    const char* id;
+    const char* category;
+    const char* name;
+};
+
+static const DebugFunctionEntry g_debugFunctions[] = {
+    { "spawn_prize",       "Items",    "Spawn Prize" },
+    { "show_custom_popup", "Popups",   "Show Custom Popup" },
+    { "open_text_box",     "Text Box", "Open Text Box" },
+    { "close_text_box",    "Text Box", "Close Text Box" },
+    { "play_se2",          "Audio",    "Play SE2" },
+};
+static const int kDebugFunctionCount = static_cast<int>(sizeof(g_debugFunctions) / sizeof(g_debugFunctions[0]));
+static int g_selectedFunction = 0;
+
+static void QueueDebugAction(const char* action, long long param1, const char* text, const double nums[6]) {
+    AcquireSRWLockExclusive(&g_lock);
+    strncpy_s(g_debugAction, action, _TRUNCATE);
+    g_debugParam1 = param1;
+    strncpy_s(g_debugParamText, text ? text : "", _TRUNCATE);
+    if (nums) memcpy(g_debugNums, nums, sizeof(g_debugNums));
+    else memset(g_debugNums, 0, sizeof(g_debugNums));
+    g_debugActionPending = true;
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+// Full-width, extra-tall button so "call this function" is always the
+// unmistakable, unambiguous action in the detail pane.
+static bool BigCallButton(const char* label = "Call") {
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.65f, 0.35f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.45f, 0.25f, 1.0f));
+    bool clicked = ImGui::Button(label, ImVec2(-1, 46));
+    ImGui::PopStyleColor(3);
+    return clicked;
+}
+
 // Only known/named actions are exposed here (not a raw address+args form) --
 // each button queues a specific, already-vetted request for Lua to dispatch
 // through the real named Lua function (e.g. spawn_prize), which is what picks
 // the correct Steam/EGS address.
+//
+// Layout: the ImGui window is pinned to fill the whole OS window every frame
+// (no title bar/move/resize of its own) so there's exactly one window, not a
+// draggable pane floating inside another one. Inside it: a scrollable list of
+// functions on the left, and the selected function's parameters + a big Call
+// button on the right.
 static void DrawForm() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(420, 220), ImGuiCond_FirstUseEver);
-    ImGui::Begin("KH1Native Debug", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::Begin("KH1Native Debug", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-    static int itemId = 1;
-    ImGui::InputInt("Item ID", &itemId);
-    if (itemId < 1) itemId = 1;
-
-    if (ImGui::Button("Spawn Prize", ImVec2(160, 0))) {
-        AcquireSRWLockExclusive(&g_lock);
-        strncpy_s(g_debugAction, "spawn_prize", _TRUNCATE);
-        g_debugParam1 = itemId;
-        g_debugActionPending = true;
-        ReleaseSRWLockExclusive(&g_lock);
-    }
-
+    ImGui::TextColored(ImVec4(0.60f, 0.75f, 1.00f, 1.0f), "KH1Native Debug");
     ImGui::Separator();
-    static char customText[128] = "TEST";
-    ImGui::InputText("Popup Text", customText, sizeof(customText));
+    ImGui::Spacing();
 
-    if (ImGui::Button("Show Popup", ImVec2(160, 0))) {
-        AcquireSRWLockExclusive(&g_lock);
-        strncpy_s(g_debugAction, "show_custom_popup", _TRUNCATE);
-        strncpy_s(g_debugParamText, customText, _TRUNCATE);
-        g_debugActionPending = true;
-        ReleaseSRWLockExclusive(&g_lock);
+    const float statusHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    float bodyHeight = avail.y - statusHeight - ImGui::GetStyle().ItemSpacing.y;
+
+    // --- Left: scrollable function list ---
+    ImGui::BeginChild("FunctionList", ImVec2(220, bodyHeight), true);
+    const char* lastCategory = nullptr;
+    for (int i = 0; i < kDebugFunctionCount; ++i) {
+        const DebugFunctionEntry& entry = g_debugFunctions[i];
+        if (!lastCategory || strcmp(lastCategory, entry.category) != 0) {
+            ImGui::SeparatorText(entry.category);
+            lastCategory = entry.category;
+        }
+        if (ImGui::Selectable(entry.name, g_selectedFunction == i, 0, ImVec2(0, 24))) {
+            g_selectedFunction = i;
+        }
     }
+    ImGui::EndChild();
 
-    ImGui::Separator();
-    static char textBoxText[128] = "TEST TEXT BOX";
-    static int textBoxWindowId = 1;
-    static float textBoxDuration = 0.0f;
-    static int textBoxStyle = 0;
-    static int textBoxX = 0;
-    static int textBoxY = 0;
-    static int textBoxWidth = 10;
-    static int textBoxHeight = 3;
-
-    ImGui::InputText("Text Box Text", textBoxText, sizeof(textBoxText));
-    ImGui::InputInt("Window ID", &textBoxWindowId);
-    if (textBoxWindowId < 0) textBoxWindowId = 0;
-    if (textBoxWindowId > 3) textBoxWindowId = 3;
-    ImGui::InputFloat("Duration (seconds, 0=manual)", &textBoxDuration);
-    if (textBoxDuration < 0.0f) textBoxDuration = 0.0f;
-    ImGui::InputInt("Style (raw, 0-8 valid)", &textBoxStyle);
-    if (textBoxStyle < 0) textBoxStyle = 0;
-    if (textBoxStyle > 8) textBoxStyle = 8;
-    ImGui::InputInt("X", &textBoxX);
-    ImGui::InputInt("Y", &textBoxY);
-    ImGui::InputInt("Width", &textBoxWidth);
-    ImGui::InputInt("Height", &textBoxHeight);
-
-    // Single action carries every field at once -- kh1_lua_library's
-    // open_text_box applies style/position/size to the template before
-    // opening, so there's no separate "configure, then open" step here.
-    if (ImGui::Button("Open Text Box", ImVec2(160, 0))) {
-        AcquireSRWLockExclusive(&g_lock);
-        strncpy_s(g_debugAction, "open_text_box", _TRUNCATE);
-        strncpy_s(g_debugParamText, textBoxText, _TRUNCATE);
-        g_debugParam1 = textBoxWindowId;
-        g_debugNums[0] = (double)textBoxDuration;
-        g_debugNums[1] = (double)textBoxStyle;
-        g_debugNums[2] = (double)textBoxX;
-        g_debugNums[3] = (double)textBoxY;
-        g_debugNums[4] = (double)textBoxWidth;
-        g_debugNums[5] = (double)textBoxHeight;
-        g_debugActionPending = true;
-        ReleaseSRWLockExclusive(&g_lock);
-    }
     ImGui::SameLine();
-    if (ImGui::Button("Close Text Box", ImVec2(160, 0))) {
-        AcquireSRWLockExclusive(&g_lock);
-        strncpy_s(g_debugAction, "close_text_box", _TRUNCATE);
-        g_debugParam1 = textBoxWindowId;
-        g_debugActionPending = true;
-        ReleaseSRWLockExclusive(&g_lock);
-    }
 
+    // --- Right: selected function's parameters + call button ---
+    ImGui::BeginChild("FunctionDetail", ImVec2(0, bodyHeight), true);
+    const DebugFunctionEntry& current = g_debugFunctions[g_selectedFunction];
+    ImGui::TextColored(ImVec4(0.60f, 0.75f, 1.00f, 1.0f), "%s", current.name);
     ImGui::Separator();
-    static int seId = 31;
-    ImGui::InputInt("SE ID (valid range ~1-76)", &seId);
-    if (seId < 1) seId = 1;
-    if (seId > 76) seId = 76;
-    ImGui::TextWrapped("Param 2 is always 0 -- unregistered SE ids outside this range can crash the game.");
+    ImGui::Spacing();
 
-    if (ImGui::Button("Play SE2", ImVec2(160, 0))) {
-        AcquireSRWLockExclusive(&g_lock);
-        strncpy_s(g_debugAction, "play_se2", _TRUNCATE);
-        g_debugNums[0] = (double)seId;
-        g_debugNums[1] = 0.0;
-        g_debugActionPending = true;
-        ReleaseSRWLockExclusive(&g_lock);
+    if (strcmp(current.id, "spawn_prize") == 0) {
+        static int itemId = 1;
+        ImGui::InputInt("Item ID", &itemId);
+        if (itemId < 1) itemId = 1;
+        if (BigCallButton()) {
+            QueueDebugAction("spawn_prize", itemId, nullptr, nullptr);
+        }
+    } else if (strcmp(current.id, "show_custom_popup") == 0) {
+        static char customText[128] = "TEST";
+        ImGui::InputText("Popup Text", customText, sizeof(customText));
+        if (BigCallButton()) {
+            QueueDebugAction("show_custom_popup", 0, customText, nullptr);
+        }
+    } else if (strcmp(current.id, "open_text_box") == 0) {
+        static char textBoxText[128] = "TEST TEXT BOX";
+        static int textBoxWindowId = 1;
+        static float textBoxDuration = 0.0f;
+        static int textBoxStyle = 0;
+        static int textBoxX = 0;
+        static int textBoxY = 0;
+        static int textBoxWidth = 10;
+        static int textBoxHeight = 3;
+
+        ImGui::InputText("Text Box Text", textBoxText, sizeof(textBoxText));
+        ImGui::InputInt("Window ID", &textBoxWindowId);
+        if (textBoxWindowId < 0) textBoxWindowId = 0;
+        if (textBoxWindowId > 3) textBoxWindowId = 3;
+        ImGui::InputFloat("Duration (seconds, 0=manual)", &textBoxDuration);
+        if (textBoxDuration < 0.0f) textBoxDuration = 0.0f;
+        ImGui::InputInt("Style (raw, 0-8 valid)", &textBoxStyle);
+        if (textBoxStyle < 0) textBoxStyle = 0;
+        if (textBoxStyle > 8) textBoxStyle = 8;
+        ImGui::InputInt("X", &textBoxX);
+        ImGui::InputInt("Y", &textBoxY);
+        ImGui::InputInt("Width", &textBoxWidth);
+        ImGui::InputInt("Height", &textBoxHeight);
+
+        // Single action carries every field at once -- kh1_lua_library's
+        // open_text_box applies style/position/size to the template before
+        // opening, so there's no separate "configure, then open" step here.
+        if (BigCallButton("Open Text Box")) {
+            double nums[6] = {
+                (double)textBoxDuration, (double)textBoxStyle, (double)textBoxX,
+                (double)textBoxY, (double)textBoxWidth, (double)textBoxHeight
+            };
+            QueueDebugAction("open_text_box", textBoxWindowId, textBoxText, nums);
+        }
+    } else if (strcmp(current.id, "close_text_box") == 0) {
+        static int textBoxWindowId = 1;
+        ImGui::InputInt("Window ID", &textBoxWindowId);
+        if (textBoxWindowId < 0) textBoxWindowId = 0;
+        if (textBoxWindowId > 3) textBoxWindowId = 3;
+        if (BigCallButton("Close Text Box")) {
+            QueueDebugAction("close_text_box", textBoxWindowId, nullptr, nullptr);
+        }
+    } else if (strcmp(current.id, "play_se2") == 0) {
+        static int seId = 31;
+        ImGui::InputInt("SE ID (valid range ~1-76)", &seId);
+        if (seId < 1) seId = 1;
+        if (seId > 76) seId = 76;
+        ImGui::TextWrapped("Param 2 is always 0 -- unregistered SE ids outside this range can crash the game.");
+        if (BigCallButton("Play SE2")) {
+            double nums[6] = { (double)seId, 0.0, 0.0, 0.0, 0.0, 0.0 };
+            QueueDebugAction("play_se2", 0, nullptr, nums);
+        }
     }
 
+    ImGui::EndChild();
+
+    // --- Status bar ---
     char result[256];
     AcquireSRWLockExclusive(&g_lock);
     strncpy_s(result, g_debugResult, _TRUNCATE);
     ReleaseSRWLockExclusive(&g_lock);
 
-    ImGui::Separator();
+    ImGui::Spacing();
     ImGui::TextWrapped("Last result: %s", result[0] ? result : "(none yet)");
 
     ImGui::End();
@@ -250,7 +351,7 @@ static DWORD WINAPI FormThread(LPVOID) {
 
     g_hwnd = CreateWindowExA(WS_EX_TOPMOST, wc.lpszClassName, "KH1Native Debug",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 460, 280, nullptr, nullptr, wc.hInstance, nullptr);
+        CW_USEDEFAULT, CW_USEDEFAULT, 820, 480, nullptr, nullptr, wc.hInstance, nullptr);
 
     DXGI_SWAP_CHAIN_DESC scd = {};
     scd.BufferCount = 2;
@@ -277,6 +378,7 @@ static DWORD WINAPI FormThread(LPVOID) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
+    ApplyImGuiStyle();
 
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
