@@ -43,18 +43,22 @@ static void LogDebug(const char* msg) {
 typedef int          (__cdecl* t_lua_gettop)(void* L);
 typedef const char*  (__cdecl* t_lua_tolstring)(void* L, int idx, size_t* len);
 typedef void         (__cdecl* t_lua_pushinteger)(void* L, long long n);
+typedef void         (__cdecl* t_lua_pushnumber)(void* L, double n);
 typedef const char*  (__cdecl* t_lua_pushstring)(void* L, const char* s);
 typedef void         (__cdecl* t_luaL_setfuncs)(void* L, const void* l, int nup);
 typedef void         (__cdecl* t_lua_createtable)(void* L, int narr, int nrec);
 typedef void         (__cdecl* t_lua_setfield)(void* L, int idx, const char* k);
+typedef void         (__cdecl* t_lua_rawseti)(void* L, int idx, long long n);
 
 static t_lua_gettop       p_lua_gettop       = nullptr;
 static t_lua_tolstring    p_lua_tolstring    = nullptr;
 static t_lua_pushinteger  p_lua_pushinteger  = nullptr;
+static t_lua_pushnumber   p_lua_pushnumber   = nullptr;
 static t_lua_pushstring   p_lua_pushstring   = nullptr;
 static t_luaL_setfuncs    p_luaL_setfuncs    = nullptr;
 static t_lua_createtable  p_lua_createtable  = nullptr;
 static t_lua_setfield     p_lua_setfield     = nullptr;
+static t_lua_rawseti      p_lua_rawseti      = nullptr;
 
 struct luaL_Reg { const char* name; void* func; };
 
@@ -70,7 +74,11 @@ static SRWLOCK g_lock = SRWLOCK_INIT;
 
 static bool g_debugActionPending = false;
 static char g_debugAction[32] = "";
-static long long g_debugParam1 = 0;
+static long long g_debugParam1 = 0; // window_id, used by every text-box action
+// duration, style, x, y, width, height -- all six live in one array so the
+// overlay can queue "open a text box with every current field" in a single
+// action rather than needing a separate Set Style/Position/Size step first.
+static double g_debugNums[6] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 static char g_debugParamText[256] = "";
 
 static char g_debugResult[256] = "";
@@ -157,16 +165,41 @@ static void DrawForm() {
     ImGui::Separator();
     static char textBoxText[128] = "TEST TEXT BOX";
     static int textBoxWindowId = 1;
+    static float textBoxDuration = 0.0f;
+    static int textBoxStyle = 0;
+    static int textBoxX = 0;
+    static int textBoxY = 0;
+    static int textBoxWidth = 10;
+    static int textBoxHeight = 3;
+
     ImGui::InputText("Text Box Text", textBoxText, sizeof(textBoxText));
     ImGui::InputInt("Window ID", &textBoxWindowId);
     if (textBoxWindowId < 0) textBoxWindowId = 0;
     if (textBoxWindowId > 3) textBoxWindowId = 3;
+    ImGui::InputFloat("Duration (seconds, 0=manual)", &textBoxDuration);
+    if (textBoxDuration < 0.0f) textBoxDuration = 0.0f;
+    ImGui::InputInt("Style (raw, 0-8 valid)", &textBoxStyle);
+    if (textBoxStyle < 0) textBoxStyle = 0;
+    if (textBoxStyle > 8) textBoxStyle = 8;
+    ImGui::InputInt("X", &textBoxX);
+    ImGui::InputInt("Y", &textBoxY);
+    ImGui::InputInt("Width", &textBoxWidth);
+    ImGui::InputInt("Height", &textBoxHeight);
 
+    // Single action carries every field at once -- kh1_lua_library's
+    // open_text_box applies style/position/size to the template before
+    // opening, so there's no separate "configure, then open" step here.
     if (ImGui::Button("Open Text Box", ImVec2(160, 0))) {
         AcquireSRWLockExclusive(&g_lock);
         strncpy_s(g_debugAction, "open_text_box", _TRUNCATE);
         strncpy_s(g_debugParamText, textBoxText, _TRUNCATE);
         g_debugParam1 = textBoxWindowId;
+        g_debugNums[0] = (double)textBoxDuration;
+        g_debugNums[1] = (double)textBoxStyle;
+        g_debugNums[2] = (double)textBoxX;
+        g_debugNums[3] = (double)textBoxY;
+        g_debugNums[4] = (double)textBoxWidth;
+        g_debugNums[5] = (double)textBoxHeight;
         g_debugActionPending = true;
         ReleaseSRWLockExclusive(&g_lock);
     }
@@ -308,7 +341,7 @@ static void ToggleFormVisibility() {
 
 // --- LUA-CALLABLE FUNCTIONS ---
 
-// poll_debug_action() -> nil | {action=, param1=, param_text=}
+// poll_debug_action() -> nil | {action=, param1=, nums={duration,style,x,y,width,height}, param_text=}
 //
 // Called every Lua frame by the debug companion script. Also polls F6 to
 // show/hide the debug window (same edge-triggered pattern KH1Overlay uses for
@@ -324,12 +357,14 @@ extern "C" int l_poll_debug_action(void* L) {
     bool has;
     char action[32];
     long long param1;
+    double nums[6];
     char paramText[256];
     AcquireSRWLockExclusive(&g_lock);
     has = g_debugActionPending;
     if (has) {
         strncpy_s(action, g_debugAction, _TRUNCATE);
         param1 = g_debugParam1;
+        memcpy(nums, g_debugNums, sizeof(nums));
         strncpy_s(paramText, g_debugParamText, _TRUNCATE);
         g_debugActionPending = false;
     }
@@ -337,10 +372,18 @@ extern "C" int l_poll_debug_action(void* L) {
 
     if (!has) return 0;
 
-    p_lua_createtable(L, 0, 3);
+    p_lua_createtable(L, 0, 4);
     p_lua_pushstring(L, action); p_lua_setfield(L, -2, "action");
     p_lua_pushinteger(L, param1); p_lua_setfield(L, -2, "param1");
     p_lua_pushstring(L, paramText); p_lua_setfield(L, -2, "param_text");
+
+    p_lua_createtable(L, 6, 0);
+    for (int i = 0; i < 6; ++i) {
+        p_lua_pushnumber(L, nums[i]);
+        p_lua_rawseti(L, -2, i + 1);
+    }
+    p_lua_setfield(L, -2, "nums");
+
     return 1;
 }
 
@@ -395,14 +438,16 @@ extern "C" __declspec(dllexport) int luaopen_kh1_native_debug(void* L) {
         p_lua_gettop      = (t_lua_gettop)      GetProcAddress(hLua, "lua_gettop");
         p_lua_tolstring   = (t_lua_tolstring)   GetProcAddress(hLua, "lua_tolstring");
         p_lua_pushinteger = (t_lua_pushinteger) GetProcAddress(hLua, "lua_pushinteger");
+        p_lua_pushnumber  = (t_lua_pushnumber)  GetProcAddress(hLua, "lua_pushnumber");
         p_lua_pushstring  = (t_lua_pushstring)  GetProcAddress(hLua, "lua_pushstring");
         p_luaL_setfuncs   = (t_luaL_setfuncs)   GetProcAddress(hLua, "luaL_setfuncs");
         p_lua_createtable = (t_lua_createtable) GetProcAddress(hLua, "lua_createtable");
         p_lua_setfield    = (t_lua_setfield)    GetProcAddress(hLua, "lua_setfield");
+        p_lua_rawseti     = (t_lua_rawseti)     GetProcAddress(hLua, "lua_rawseti");
     }
 
-    if (!p_lua_gettop || !p_lua_tolstring || !p_lua_pushinteger || !p_lua_pushstring ||
-        !p_luaL_setfuncs || !p_lua_createtable || !p_lua_setfield) {
+    if (!p_lua_gettop || !p_lua_tolstring || !p_lua_pushinteger || !p_lua_pushnumber || !p_lua_pushstring ||
+        !p_luaL_setfuncs || !p_lua_createtable || !p_lua_setfield || !p_lua_rawseti) {
         // Couldn't find a loaded module exporting the Lua C API -- bail out
         // without touching any of them. Returning 0 (no pushed values) makes
         // require() hand back `true` rather than crashing on a null function

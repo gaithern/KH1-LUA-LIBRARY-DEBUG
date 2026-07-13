@@ -25,6 +25,11 @@ end
 function _OnFrame()
 	if kh1_debug == nil then return end
 
+	-- Drives any pending open_text_box(..., duration_seconds) auto-closes --
+	-- must run every frame regardless of whether a debug action is pending,
+	-- so it's called before the early-return below.
+	kh1_lib.update_text_boxes()
+
 	-- Also drives the F6 show/hide toggle -- must be polled every frame
 	-- regardless of whether an action is pending.
 	local action = kh1_debug.poll_debug_action()
@@ -37,8 +42,17 @@ function _OnFrame()
 		local ok = kh1_lib.show_custom_item_popup(action.param_text)
 		kh1_debug.set_debug_result("show_custom_item_popup(\"" .. action.param_text .. "\") = " .. tostring(ok))
 	elseif action.action == "open_text_box" then
-		local ok = kh1_lib.open_text_box(action.param_text, action.param1)
-		kh1_debug.set_debug_result("open_text_box(\"" .. action.param_text .. "\", " .. action.param1 .. ") = " .. tostring(ok))
+		-- nums = {duration, style, x, y, width, height} -- see kh1_native_debug's
+		-- dllmain.cpp DrawForm, which now queues every text-box field in one
+		-- action instead of needing separate Set Style/Position/Size steps
+		-- before Open Text Box.
+		local duration, style, x, y, width, height =
+			action.nums[1], math.floor(action.nums[2]), math.floor(action.nums[3]),
+			math.floor(action.nums[4]), math.floor(action.nums[5]), math.floor(action.nums[6])
+		local ok = kh1_lib.open_text_box(action.param_text, action.param1, duration, style, x, y, width, height)
+		kh1_debug.set_debug_result("open_text_box(\"" .. action.param_text .. "\", id=" .. action.param1 ..
+			", dur=" .. duration .. ", style=" .. style .. ", pos=" .. x .. "," .. y ..
+			", size=" .. width .. "x" .. height .. ") = " .. tostring(ok))
 	elseif action.action == "close_text_box" then
 		local ok = kh1_lib.close_text_box(action.param1)
 		kh1_debug.set_debug_result("close_text_box(" .. action.param1 .. ") = " .. tostring(ok))
