@@ -212,6 +212,22 @@ static void DrawForm() {
         ReleaseSRWLockExclusive(&g_lock);
     }
 
+    ImGui::Separator();
+    static int seId = 31;
+    ImGui::InputInt("SE ID (valid range ~1-76)", &seId);
+    if (seId < 1) seId = 1;
+    if (seId > 76) seId = 76;
+    ImGui::TextWrapped("Param 2 is always 0 -- unregistered SE ids outside this range can crash the game.");
+
+    if (ImGui::Button("Play SE2", ImVec2(160, 0))) {
+        AcquireSRWLockExclusive(&g_lock);
+        strncpy_s(g_debugAction, "play_se2", _TRUNCATE);
+        g_debugNums[0] = (double)seId;
+        g_debugNums[1] = 0.0;
+        g_debugActionPending = true;
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+
     char result[256];
     AcquireSRWLockExclusive(&g_lock);
     strncpy_s(result, g_debugResult, _TRUNCATE);

@@ -56,5 +56,9 @@ function _OnFrame()
 	elseif action.action == "close_text_box" then
 		local ok = kh1_lib.close_text_box(action.param1)
 		kh1_debug.set_debug_result("close_text_box(" .. action.param1 .. ") = " .. tostring(ok))
+	elseif action.action == "play_se2" then
+		local se_id, param_2 = math.floor(action.nums[1]), math.floor(action.nums[2])
+		local ok = kh1_lib.play_se2(se_id, param_2)
+		kh1_debug.set_debug_result("play_se2(" .. se_id .. ", " .. param_2 .. ") = " .. tostring(ok))
 	end
 end
