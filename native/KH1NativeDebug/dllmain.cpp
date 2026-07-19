@@ -522,11 +522,26 @@ static const luaL_Reg kh1_native_debug_lib[] = {
     {nullptr, nullptr}
 };
 
-// LuaBackend (the OpenKH Lua host) embeds the Lua 5.4 runtime in its own DLL
-// rather than loading a separate "lua54.dll", and that host DLL's name varies
-// by build/game. So instead of guessing a filename, walk every module loaded
-// in this process and use whichever one actually exports the Lua C API.
-static HMODULE FindLuaModule() {
+// Every Lua C API export this module needs to bridge into the host's Lua
+// state. A candidate module only counts if ALL of these resolve from it.
+static const char* const kRequiredLuaExports[] = {
+    "lua_gettop", "lua_tolstring", "lua_pushinteger", "lua_pushnumber",
+    "lua_pushstring", "luaL_setfuncs", "lua_createtable", "lua_setfield",
+    "lua_rawseti",
+};
+
+static bool ModuleExportsAllRequired(HMODULE mod) {
+    if (!mod) return false;
+    for (const char* name : kRequiredLuaExports) {
+        if (!GetProcAddress(mod, name)) return false;
+    }
+    return true;
+}
+
+// Last-resort fallback in case the bundled lua54.dll (see FindLuaModule)
+// somehow isn't loaded: scan every module in the process, requiring ALL
+// required symbols to resolve from the SAME module before accepting it.
+static HMODULE FindLuaModuleByProcessScan() {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
     if (snap == INVALID_HANDLE_VALUE) return nullptr;
 
@@ -535,10 +550,10 @@ static HMODULE FindLuaModule() {
     me.dwSize = sizeof(me);
     if (Module32FirstW(snap, &me)) {
         do {
-            if (GetProcAddress(me.hModule, "lua_gettop")) {
+            if (ModuleExportsAllRequired(me.hModule)) {
                 found = me.hModule;
                 char msg[MAX_PATH + 32];
-                snprintf(msg, sizeof(msg), "Found Lua API in module: %ls", me.szModule);
+                snprintf(msg, sizeof(msg), "FindLuaModuleByProcessScan: found Lua API in module: %ls", me.szModule);
                 LogDebug(msg);
                 break;
             }
@@ -546,6 +561,24 @@ static HMODULE FindLuaModule() {
     }
     CloseHandle(snap);
     return found;
+}
+
+// The current LuaBackend build statically embeds Lua 5.4 as private,
+// unexported code -- there is no external door into it by any technique, so
+// this relies on kh1_lua_library (KH1-LUA-LIBRARY, always installed
+// alongside this debug tool) bundling its own known-good lua54.dll directly
+// under dll/lua54.dll, loaded automatically by Panacea before any script
+// runs. This module doesn't bundle a second copy of its own -- it just looks
+// for that same, already-guaranteed-present module by name.
+static HMODULE FindLuaModule() {
+    HMODULE bundled = GetModuleHandleA("lua54.dll");
+    if (ModuleExportsAllRequired(bundled)) {
+        LogDebug("FindLuaModule: resolved via bundled lua54.dll (from kh1-lua-library)");
+        return bundled;
+    }
+
+    LogDebug("FindLuaModule: bundled lua54.dll not found or incomplete, falling back to process scan");
+    return FindLuaModuleByProcessScan();
 }
 
 extern "C" __declspec(dllexport) int luaopen_kh1_native_debug(void* L) {
