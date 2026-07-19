@@ -2,11 +2,11 @@ title: KH1 Lua Library Debug
 originalAuthor: Gicu
 description: Debug overlay (F6) and test script for KH1-LUA-LIBRARY's kh1_native bridge -- not needed for normal play, requires KH1-LUA-LIBRARY to also be installed
 assets:
-- name: scripts/kh1_native_test.lua
-  method: copy
-  source:
-  - name: scripts/kh1_native_test.lua
 - name: scripts/io_packages/kh1_native_debug.dll
   method: copy
   source:
   - name: scripts/io_packages/kh1_native_debug.dll
+- name: scripts/kh1_native_test.lua
+  method: copy
+  source:
+  - name: scripts/kh1_native_test.lua
