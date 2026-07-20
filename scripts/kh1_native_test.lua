@@ -60,5 +60,11 @@ function _OnFrame()
 		local se_id, param_2 = math.floor(action.nums[1]), math.floor(action.nums[2])
 		local ok = kh1_lib.play_se2(se_id, param_2)
 		kh1_debug.set_debug_result("play_se2(" .. se_id .. ", " .. param_2 .. ") = " .. tostring(ok))
+	elseif action.action == "ko_sora" then
+		kh1_lib.ko_sora()
+		kh1_debug.set_debug_result("ko_sora() called")
+	elseif action.action == "heartless_angel_sora" then
+		kh1_lib.heartless_angel_sora()
+		kh1_debug.set_debug_result("heartless_angel_sora() called")
 	end
 end

@@ -182,6 +182,8 @@ static const DebugFunctionEntry g_debugFunctions[] = {
     { "open_text_box",     "Text Box", "Open Text Box" },
     { "close_text_box",    "Text Box", "Close Text Box" },
     { "play_se2",          "Audio",    "Play SE2" },
+    { "ko_sora",           "Sora",     "KO Sora" },
+    { "heartless_angel_sora", "Sora",  "Heartless Angel Sora" },
 };
 static const int kDebugFunctionCount = static_cast<int>(sizeof(g_debugFunctions) / sizeof(g_debugFunctions[0]));
 static int g_selectedFunction = 0;
@@ -323,6 +325,16 @@ static void DrawForm() {
         if (BigCallButton("Play SE2")) {
             double nums[6] = { (double)seId, 0.0, 0.0, 0.0, 0.0, 0.0 };
             QueueDebugAction("play_se2", 0, nullptr, nums);
+        }
+    } else if (strcmp(current.id, "ko_sora") == 0) {
+        ImGui::TextWrapped("Zeroes Sora's HP/max-HP bytes and forces the death state flag -- triggers a real game over. No-op if Sora is already KO'd.");
+        if (BigCallButton("KO Sora")) {
+            QueueDebugAction("ko_sora", 0, nullptr, nullptr);
+        }
+    } else if (strcmp(current.id, "heartless_angel_sora") == 0) {
+        ImGui::TextWrapped("Sets Sora's HP/max-HP to 1 (FF7 Heartless-Angel-style near-death). No-op if Sora is already KO'd.");
+        if (BigCallButton("Heartless Angel Sora")) {
+            QueueDebugAction("heartless_angel_sora", 0, nullptr, nullptr);
         }
     }
 
