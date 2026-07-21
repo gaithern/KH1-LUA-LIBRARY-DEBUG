@@ -38,6 +38,12 @@ function _OnFrame()
 	if action.action == "spawn_prize" then
 		local ok = kh1_lib.spawn_prize(action.param1)
 		kh1_debug.set_debug_result("spawn_prize(" .. action.param1 .. ") = " .. tostring(ok))
+	elseif action.action == "spawn_enemy" then
+		-- nums = {x, y, z, species, unused, unused}
+		local x, y, z, species = action.nums[1], action.nums[2], action.nums[3], math.floor(action.nums[4])
+		local ok, result = kh1_lib.spawn_enemy(x, y, z, species)
+		kh1_debug.set_debug_result("spawn_enemy(" .. x .. "," .. y .. "," .. z .. ", species=" .. species ..
+			") = " .. tostring(ok) .. ", " .. tostring(result))
 	elseif action.action == "show_custom_popup" then
 		local ok = kh1_lib.show_custom_item_popup(action.param_text)
 		kh1_debug.set_debug_result("show_custom_item_popup(\"" .. action.param_text .. "\") = " .. tostring(ok))

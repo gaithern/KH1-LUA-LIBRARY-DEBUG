@@ -178,6 +178,7 @@ struct DebugFunctionEntry {
 
 static const DebugFunctionEntry g_debugFunctions[] = {
     { "spawn_prize",       "Items",    "Spawn Prize" },
+    { "spawn_enemy",       "Enemies",  "Spawn Enemy" },
     { "show_custom_popup", "Popups",   "Show Custom Popup" },
     { "open_text_box",     "Text Box", "Open Text Box" },
     { "close_text_box",    "Text Box", "Close Text Box" },
@@ -267,6 +268,20 @@ static void DrawForm() {
         if (itemId < 1) itemId = 1;
         if (BigCallButton()) {
             QueueDebugAction("spawn_prize", itemId, nullptr, nullptr);
+        }
+    } else if (strcmp(current.id, "spawn_enemy") == 0) {
+        static float spawnX = 0.0f, spawnY = 0.0f, spawnZ = 0.0f;
+        static int species = 30;
+        ImGui::TextWrapped("Species must already have at least one native placement record in the CURRENT room to clone from (e.g. 30/Shadow in Traverse Town 2nd District) -- see spawn_enemy's Lua doc comment.");
+        ImGui::InputFloat("X", &spawnX);
+        ImGui::InputFloat("Y", &spawnY);
+        ImGui::InputFloat("Z", &spawnZ);
+        ImGui::InputInt("Species (30 = Shadow)", &species);
+        if (species < 0) species = 0;
+        if (species > 255) species = 255;
+        if (BigCallButton()) {
+            double nums[6] = { spawnX, spawnY, spawnZ, (double)species, 0.0, 0.0 };
+            QueueDebugAction("spawn_enemy", 0, nullptr, nums);
         }
     } else if (strcmp(current.id, "show_custom_popup") == 0) {
         static char customText[128] = "TEST";
