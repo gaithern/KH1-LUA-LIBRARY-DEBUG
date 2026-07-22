@@ -2,6 +2,7 @@
 #include <tlhelp32.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <d3d11.h>
 
 #include "imgui/imgui.h"
@@ -42,6 +43,7 @@ static void LogDebug(const char* msg) {
 // Lua-callable functions actually need).
 typedef int          (__cdecl* t_lua_gettop)(void* L);
 typedef const char*  (__cdecl* t_lua_tolstring)(void* L, int idx, size_t* len);
+typedef long long    (__cdecl* t_lua_tointegerx)(void* L, int idx, int* isnum);
 typedef void         (__cdecl* t_lua_pushinteger)(void* L, long long n);
 typedef void         (__cdecl* t_lua_pushnumber)(void* L, double n);
 typedef const char*  (__cdecl* t_lua_pushstring)(void* L, const char* s);
@@ -52,6 +54,7 @@ typedef void         (__cdecl* t_lua_rawseti)(void* L, int idx, long long n);
 
 static t_lua_gettop       p_lua_gettop       = nullptr;
 static t_lua_tolstring    p_lua_tolstring    = nullptr;
+static t_lua_tointegerx   p_lua_tointegerx   = nullptr;
 static t_lua_pushinteger  p_lua_pushinteger  = nullptr;
 static t_lua_pushnumber   p_lua_pushnumber   = nullptr;
 static t_lua_pushstring   p_lua_pushstring   = nullptr;
@@ -179,6 +182,7 @@ struct DebugFunctionEntry {
 static const DebugFunctionEntry g_debugFunctions[] = {
     { "spawn_prize",       "Items",    "Spawn Prize" },
     { "spawn_enemy",       "Enemies",  "Spawn Enemy" },
+    { "forge_species_slot", "Enemies", "Forge Species Slot (test)" },
     { "show_custom_popup", "Popups",   "Show Custom Popup" },
     { "open_text_box",     "Text Box", "Open Text Box" },
     { "close_text_box",    "Text Box", "Close Text Box" },
@@ -272,16 +276,43 @@ static void DrawForm() {
     } else if (strcmp(current.id, "spawn_enemy") == 0) {
         static float spawnX = 0.0f, spawnY = 0.0f, spawnZ = 0.0f;
         static int species = 30;
-        ImGui::TextWrapped("Species must already have at least one native placement record in the CURRENT room to clone from (e.g. 30/Shadow in Traverse Town 2nd District) -- see spawn_enemy's Lua doc comment.");
+        static bool useSoraPos = true;
+        ImGui::TextWrapped("Species must already have at least one native placement record in the CURRENT room to clone from (e.g. 30/Shadow in Traverse Town 2nd District), or a captured static fallback template in dllmain.cpp -- see spawn_enemy's Lua doc comment.");
+        ImGui::Checkbox("Spawn at Sora's position", &useSoraPos);
+        if (useSoraPos) {
+            ImGui::TextDisabled("X/Y/Z below are ignored -- position comes from get_sora_pos() at call time.");
+        }
+        ImGui::BeginDisabled(useSoraPos);
         ImGui::InputFloat("X", &spawnX);
         ImGui::InputFloat("Y", &spawnY);
         ImGui::InputFloat("Z", &spawnZ);
+        ImGui::EndDisabled();
         ImGui::InputInt("Species (30 = Shadow)", &species);
         if (species < 0) species = 0;
         if (species > 255) species = 255;
         if (BigCallButton()) {
-            double nums[6] = { spawnX, spawnY, spawnZ, (double)species, 0.0, 0.0 };
+            // nums[4] (5th slot) doubles as the "use Sora's position" flag --
+            // kh1_native_test.lua reads it and, if set, omits x/y/z entirely
+            // so kh1_lib.spawn_enemy's own get_sora_pos() default applies at
+            // call time instead of a position sampled when the button was drawn.
+            double nums[6] = { spawnX, spawnY, spawnZ, (double)species, useSoraPos ? 1.0 : 0.0, 0.0 };
             QueueDebugAction("spawn_enemy", 0, nullptr, nums);
+        }
+    } else if (strcmp(current.id, "forge_species_slot") == 0) {
+        static int species = 34;
+        static int state = 6;
+        static char modelName[64] = "FAKE_OTHER_COLLISION_TEST.mdls";
+        ImGui::TextWrapped("Directly pokes loadedSpeciesPtrTable's per-species state struct to simulate 'this local species slot already holds a different creature's data this session', without needing a real room that happens to have one. Exists only to live-test spawn_enemy's slot-collision guard in kh1_native.dll -- see its dllmain.cpp (LOADED_SPECIES_STRIDE / LOADED_SPECIES_STATE_OFFSET_FROM_PTR / LOADED_SPECIES_MODEL_NAME_OFFSET_FROM_PTR) for the struct layout this mirrors.");
+        ImGui::InputInt("Species", &species);
+        if (species < 0) species = 0;
+        if (species > 255) species = 255;
+        ImGui::InputInt("State (0 = idle/free, nonzero = \"in use\")", &state);
+        if (state < 0) state = 0;
+        if (state > 255) state = 255;
+        ImGui::InputText("Cached model filename", modelName, sizeof(modelName));
+        if (BigCallButton("Forge Slot")) {
+            double nums[6] = { (double)species, 0.0, 0.0, 0.0, 0.0, 0.0 };
+            QueueDebugAction("forge_species_slot", state, modelName, nums);
         }
     } else if (strcmp(current.id, "show_custom_popup") == 0) {
         static char customText[128] = "TEST";
@@ -543,16 +574,62 @@ extern "C" int l_set_debug_result(void* L) {
     return 0;
 }
 
+// forge_species_slot(loadedPtrTableRva, species, state, modelFilename) -> 1
+//
+// Test-only: directly pokes the per-species asset-load state struct that
+// loadedSpeciesPtrTable (a Steam/EGS Global address, passed in by the
+// caller) points into -- see KH1-LUA-LIBRARY's dllmain.cpp comment on
+// LOADED_SPECIES_STRIDE / LOADED_SPECIES_STATE_OFFSET_FROM_PTR /
+// LOADED_SPECIES_MODEL_NAME_OFFSET_FROM_PTR for the full struct writeup
+// (confirmed via decompiling FUN_140285ee0/FUN_140286420). Offsets
+// duplicated here rather than shared, matching this module's existing
+// independence from kh1_native.dll. Deliberately NOT a general-purpose
+// memory writer -- see DrawForm's own comment on why raw address+args
+// actions aren't exposed here -- this one only ever writes into this one
+// fixed-layout struct, at an offset derived the same way l_spawn_enemy
+// itself derives it. Exists purely to simulate "a different creature
+// already owns this local species-slot number" without needing to find a
+// real room where that happens to be true, so spawn_enemy's slot-collision
+// guard can be live-tested on demand.
+static const int LOADED_SPECIES_STRIDE = 0x50;
+static const int LOADED_SPECIES_STATE_OFFSET_FROM_PTR = -0x45;
+static const int LOADED_SPECIES_MODEL_NAME_OFFSET_FROM_PTR = -0x44;
+static const int LOADED_SPECIES_MODEL_NAME_SIZE = 0x20;
+
+extern "C" int l_forge_species_slot(void* L) {
+    unsigned long long loadedPtrTableRva = (unsigned long long)p_lua_tointegerx(L, 1, nullptr);
+    uint8_t species = (uint8_t)p_lua_tointegerx(L, 2, nullptr);
+    uint8_t state = (uint8_t)p_lua_tointegerx(L, 3, nullptr);
+    const char* modelName = p_lua_tolstring(L, 4, nullptr);
+
+    unsigned long long base = (unsigned long long)GetModuleHandleA(nullptr);
+    volatile uint8_t* stateAddr = (volatile uint8_t*)(uintptr_t)(base + loadedPtrTableRva + LOADED_SPECIES_STATE_OFFSET_FROM_PTR + (size_t)species * LOADED_SPECIES_STRIDE);
+    char* nameAddr = (char*)(uintptr_t)(base + loadedPtrTableRva + LOADED_SPECIES_MODEL_NAME_OFFSET_FROM_PTR + (size_t)species * LOADED_SPECIES_STRIDE);
+
+    *stateAddr = state;
+    if (modelName) {
+        strncpy_s(nameAddr, LOADED_SPECIES_MODEL_NAME_SIZE, modelName, _TRUNCATE);
+    }
+
+    char msg[192];
+    snprintf(msg, sizeof(msg), "forge_species_slot: species=%d state=%d model=\"%s\"", species, state, modelName ? modelName : "");
+    LogDebug(msg);
+
+    p_lua_pushinteger(L, 1);
+    return 1;
+}
+
 static const luaL_Reg kh1_native_debug_lib[] = {
     {"poll_debug_action", reinterpret_cast<void*>(l_poll_debug_action)},
     {"set_debug_result", reinterpret_cast<void*>(l_set_debug_result)},
+    {"forge_species_slot", reinterpret_cast<void*>(l_forge_species_slot)},
     {nullptr, nullptr}
 };
 
 // Every Lua C API export this module needs to bridge into the host's Lua
 // state. A candidate module only counts if ALL of these resolve from it.
 static const char* const kRequiredLuaExports[] = {
-    "lua_gettop", "lua_tolstring", "lua_pushinteger", "lua_pushnumber",
+    "lua_gettop", "lua_tolstring", "lua_tointegerx", "lua_pushinteger", "lua_pushnumber",
     "lua_pushstring", "luaL_setfuncs", "lua_createtable", "lua_setfield",
     "lua_rawseti",
 };
@@ -615,6 +692,7 @@ extern "C" __declspec(dllexport) int luaopen_kh1_native_debug(void* L) {
     if (hLua && !p_lua_gettop) {
         p_lua_gettop      = (t_lua_gettop)      GetProcAddress(hLua, "lua_gettop");
         p_lua_tolstring   = (t_lua_tolstring)   GetProcAddress(hLua, "lua_tolstring");
+        p_lua_tointegerx  = (t_lua_tointegerx)  GetProcAddress(hLua, "lua_tointegerx");
         p_lua_pushinteger = (t_lua_pushinteger) GetProcAddress(hLua, "lua_pushinteger");
         p_lua_pushnumber  = (t_lua_pushnumber)  GetProcAddress(hLua, "lua_pushnumber");
         p_lua_pushstring  = (t_lua_pushstring)  GetProcAddress(hLua, "lua_pushstring");
@@ -624,7 +702,7 @@ extern "C" __declspec(dllexport) int luaopen_kh1_native_debug(void* L) {
         p_lua_rawseti     = (t_lua_rawseti)     GetProcAddress(hLua, "lua_rawseti");
     }
 
-    if (!p_lua_gettop || !p_lua_tolstring || !p_lua_pushinteger || !p_lua_pushnumber || !p_lua_pushstring ||
+    if (!p_lua_gettop || !p_lua_tolstring || !p_lua_tointegerx || !p_lua_pushinteger || !p_lua_pushnumber || !p_lua_pushstring ||
         !p_luaL_setfuncs || !p_lua_createtable || !p_lua_setfield || !p_lua_rawseti) {
         // Couldn't find a loaded module exporting the Lua C API -- bail out
         // without touching any of them. Returning 0 (no pushed values) makes
