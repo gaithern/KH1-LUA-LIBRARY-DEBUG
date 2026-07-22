@@ -275,9 +275,10 @@ static void DrawForm() {
         }
     } else if (strcmp(current.id, "spawn_enemy") == 0) {
         static float spawnX = 0.0f, spawnY = 0.0f, spawnZ = 0.0f;
-        static int species = 30;
+        static char modelPath[64] = "xa_ex_2010.mdls";
+        static char motionPath[64] = "xa_ex_2010.mset";
         static bool useSoraPos = true;
-        ImGui::TextWrapped("Species must already have at least one native placement record in the CURRENT room to clone from (e.g. 30/Shadow in Traverse Town 2nd District), or a captured static fallback template in dllmain.cpp -- see spawn_enemy's Lua doc comment.");
+        ImGui::TextWrapped("Identifies the creature by its real model/motion filename pair, NOT a species/slot number -- species was proven a per-room-local index with no fixed meaning across rooms. Needs either a native placement record of this creature already in the CURRENT room, or a verified fallback template in kh1_native.dll's kKnownCreatures (currently just Soldier, xa_ex_2010) -- see spawn_enemy's Lua doc comment.");
         ImGui::Checkbox("Spawn at Sora's position", &useSoraPos);
         if (useSoraPos) {
             ImGui::TextDisabled("X/Y/Z below are ignored -- position comes from get_sora_pos() at call time.");
@@ -287,16 +288,20 @@ static void DrawForm() {
         ImGui::InputFloat("Y", &spawnY);
         ImGui::InputFloat("Z", &spawnZ);
         ImGui::EndDisabled();
-        ImGui::InputInt("Species (30 = Shadow)", &species);
-        if (species < 0) species = 0;
-        if (species > 255) species = 255;
+        ImGui::InputText("Model filename", modelPath, sizeof(modelPath));
+        ImGui::InputText("Motion filename", motionPath, sizeof(motionPath));
         if (BigCallButton()) {
             // nums[4] (5th slot) doubles as the "use Sora's position" flag --
             // kh1_native_test.lua reads it and, if set, omits x/y/z entirely
             // so kh1_lib.spawn_enemy's own get_sora_pos() default applies at
             // call time instead of a position sampled when the button was drawn.
-            double nums[6] = { spawnX, spawnY, spawnZ, (double)species, useSoraPos ? 1.0 : 0.0, 0.0 };
-            QueueDebugAction("spawn_enemy", 0, nullptr, nums);
+            // The two filenames are packed into one param_text ("model|motion")
+            // rather than adding a second string field to the shared debug-action
+            // struct -- kh1_native_test.lua splits it back apart.
+            double nums[6] = { spawnX, spawnY, spawnZ, 0.0, useSoraPos ? 1.0 : 0.0, 0.0 };
+            char packed[136];
+            snprintf(packed, sizeof(packed), "%s|%s", modelPath, motionPath);
+            QueueDebugAction("spawn_enemy", 0, packed, nums);
         }
     } else if (strcmp(current.id, "forge_species_slot") == 0) {
         static int species = 34;

@@ -39,21 +39,22 @@ function _OnFrame()
 		local ok = kh1_lib.spawn_prize(action.param1)
 		kh1_debug.set_debug_result("spawn_prize(" .. action.param1 .. ") = " .. tostring(ok))
 	elseif action.action == "spawn_enemy" then
-		-- nums = {x, y, z, species, use_sora_pos, unused}
-		local species = math.floor(action.nums[4])
+		-- nums = {x, y, z, unused, use_sora_pos, unused}; param_text packs
+		-- "model_path|motion_path" (two strings, one field -- see dllmain.cpp)
+		local model_path, motion_path = action.param_text:match("^(.-)|(.*)$")
 		local useSoraPos = action.nums[5] ~= 0
 		local ok, result
 		if useSoraPos then
 			-- Omit x/y/z entirely so kh1_lib.spawn_enemy's own get_sora_pos()
 			-- default applies at call time, not whatever position the X/Y/Z
 			-- boxes (disabled in the overlay while this is checked) hold.
-			ok, result = kh1_lib.spawn_enemy(nil, nil, nil, species)
-			kh1_debug.set_debug_result("spawn_enemy(<sora pos>, species=" .. species ..
+			ok, result = kh1_lib.spawn_enemy(model_path, motion_path, nil, nil, nil)
+			kh1_debug.set_debug_result("spawn_enemy(<sora pos>, " .. model_path ..
 				") = " .. tostring(ok) .. ", " .. tostring(result))
 		else
 			local x, y, z = action.nums[1], action.nums[2], action.nums[3]
-			ok, result = kh1_lib.spawn_enemy(x, y, z, species)
-			kh1_debug.set_debug_result("spawn_enemy(" .. x .. "," .. y .. "," .. z .. ", species=" .. species ..
+			ok, result = kh1_lib.spawn_enemy(model_path, motion_path, x, y, z)
+			kh1_debug.set_debug_result("spawn_enemy(" .. model_path .. ", " .. x .. "," .. y .. "," .. z ..
 				") = " .. tostring(ok) .. ", " .. tostring(result))
 		end
 	elseif action.action == "forge_species_slot" then
