@@ -383,7 +383,7 @@ static void DrawForm() {
             QueueDebugAction("ko_sora", 0, nullptr, nullptr);
         }
     } else if (strcmp(current.id, "heartless_angel_sora") == 0) {
-        ImGui::TextWrapped("Sets Sora's HP/max-HP to 1 (FF7 Heartless-Angel-style near-death). No-op if Sora is already KO'd.");
+        ImGui::TextWrapped("Sets Sora's HP to 1 and MP to 0. No-op if Sora is already KO'd.");
         if (BigCallButton("Heartless Angel Sora")) {
             QueueDebugAction("heartless_angel_sora", 0, nullptr, nullptr);
         }
