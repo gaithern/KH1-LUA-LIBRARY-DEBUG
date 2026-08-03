@@ -30,6 +30,10 @@ function _OnFrame()
 	-- so it's called before the early-return below.
 	kh1_lib.update_text_boxes()
 
+	-- Same idea for any pending spawn_enemy_async request (see
+	-- kh1_lua_library.lua's comment on why this can't block instead).
+	kh1_lib.update_spawn_enemy_async()
+
 	-- Also drives the F6 show/hide toggle -- must be polled every frame
 	-- regardless of whether an action is pending.
 	local action = kh1_debug.poll_debug_action()
@@ -39,31 +43,13 @@ function _OnFrame()
 		local ok = kh1_lib.spawn_prize(action.param1)
 		kh1_debug.set_debug_result("spawn_prize(" .. action.param1 .. ") = " .. tostring(ok))
 	elseif action.action == "spawn_enemy" then
-		-- nums = {x, y, z, unused, use_sora_pos, unused}; param_text packs
-		-- "model_path|motion_path" (two strings, one field -- see dllmain.cpp)
-		local model_path, motion_path = action.param_text:match("^(.-)|(.*)$")
-		local useSoraPos = action.nums[5] ~= 0
-		local ok, result
-		if useSoraPos then
-			-- Omit x/y/z entirely so kh1_lib.spawn_enemy's own get_sora_pos()
-			-- default applies at call time, not whatever position the X/Y/Z
-			-- boxes (disabled in the overlay while this is checked) hold.
-			ok, result = kh1_lib.spawn_enemy(model_path, motion_path, nil, nil, nil)
-			kh1_debug.set_debug_result("spawn_enemy(<sora pos>, " .. model_path ..
-				") = " .. tostring(ok) .. ", " .. tostring(result))
-		else
-			local x, y, z = action.nums[1], action.nums[2], action.nums[3]
-			ok, result = kh1_lib.spawn_enemy(model_path, motion_path, x, y, z)
-			kh1_debug.set_debug_result("spawn_enemy(" .. model_path .. ", " .. x .. "," .. y .. "," .. z ..
-				") = " .. tostring(ok) .. ", " .. tostring(result))
-		end
-	elseif action.action == "forge_species_slot" then
-		-- nums = {species, unused...}; param1 = state; param_text = model filename
-		local species = math.floor(action.nums[1])
-		local state = math.floor(action.param1)
-		local ok = kh1_debug.forge_species_slot(loadedSpeciesPtrTable, species, state, action.param_text)
-		kh1_debug.set_debug_result("forge_species_slot(species=" .. species .. ", state=" .. state ..
-			", model=\"" .. action.param_text .. "\") = " .. tostring(ok))
+		local model_path = action.param_text .. ".mdls"
+		local motion_path = action.param_text .. ".mset"
+		kh1_debug.set_debug_result("spawn_enemy_async(\"" .. model_path .. "\") queued...")
+		kh1_lib.spawn_enemy_async(model_path, motion_path, nil, nil, nil, function(ok, result)
+			kh1_debug.set_debug_result("spawn_enemy_async(\"" .. model_path .. "\") = " .. tostring(ok) ..
+				" / " .. tostring(result))
+		end)
 	elseif action.action == "show_custom_popup" then
 		local ok = kh1_lib.show_custom_item_popup(action.param_text)
 		kh1_debug.set_debug_result("show_custom_item_popup(\"" .. action.param_text .. "\") = " .. tostring(ok))
