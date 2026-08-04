@@ -30,9 +30,9 @@ function _OnFrame()
 	-- so it's called before the early-return below.
 	kh1_lib.update_text_boxes()
 
-	-- Same idea for any pending spawn_enemy_async request (see
+	-- Same idea for any pending spawn_enemy request (see
 	-- kh1_lua_library.lua's comment on why this can't block instead).
-	kh1_lib.update_spawn_enemy_async()
+	kh1_lib.update_spawn_enemy()
 
 	-- Also drives the F6 show/hide toggle -- must be polled every frame
 	-- regardless of whether an action is pending.
@@ -45,9 +45,9 @@ function _OnFrame()
 	elseif action.action == "spawn_enemy" then
 		local model_path = action.param_text .. ".mdls"
 		local motion_path = action.param_text .. ".mset"
-		kh1_debug.set_debug_result("spawn_enemy_async(\"" .. model_path .. "\") queued...")
-		kh1_lib.spawn_enemy_async(model_path, motion_path, nil, nil, nil, function(ok, result)
-			kh1_debug.set_debug_result("spawn_enemy_async(\"" .. model_path .. "\") = " .. tostring(ok) ..
+		kh1_debug.set_debug_result("spawn_enemy(\"" .. model_path .. "\") queued...")
+		kh1_lib.spawn_enemy(model_path, motion_path, nil, nil, nil, function(ok, result)
+			kh1_debug.set_debug_result("spawn_enemy(\"" .. model_path .. "\") = " .. tostring(ok) ..
 				" / " .. tostring(result))
 		end)
 	elseif action.action == "show_custom_popup" then
