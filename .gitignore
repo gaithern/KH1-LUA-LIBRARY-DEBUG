@@ -13,3 +13,8 @@ native/**/*.exp
 native/**/*.tlog
 native/**/*.recipe
 native/**/*.pch
+
+# Python bytecode. tools/slotmap.py is normally run as a script, but importing it
+# (as the ad-hoc analysis one-liners do) makes CPython cache a .pyc next to it.
+__pycache__/
+*.py[cod]
