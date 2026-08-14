@@ -178,6 +178,7 @@ struct DebugFunctionEntry {
 
 static const DebugFunctionEntry g_debugFunctions[] = {
     { "spawn_prize",       "Items",    "Spawn Prize" },
+    { "spawn_enemy",       "Enemies",  "Spawn Enemy" },
     { "show_custom_popup", "Popups",   "Show Custom Popup" },
     { "open_text_box",     "Text Box", "Open Text Box" },
     { "close_text_box",    "Text Box", "Close Text Box" },
@@ -267,6 +268,20 @@ static void DrawForm() {
         if (itemId < 1) itemId = 1;
         if (BigCallButton()) {
             QueueDebugAction("spawn_prize", itemId, nullptr, nullptr);
+        }
+    } else if (strcmp(current.id, "spawn_enemy") == 0) {
+        // Base filename only (both model and motion files share it, e.g.
+        // xa_ex_2010.mdls/.mset) -- kh1_native_test.lua appends the two
+        // extensions before calling kh1_lua_library's spawn_enemy. Spawns at
+        // Sora's current live position (x/y/z omitted, same default
+        // spawn_enemy itself uses). Requires the creature already be native
+        // to the current room or already learned/known this session -- see
+        // kh1_lua_library.lua's spawn_enemy comment.
+        static char creatureBase[64] = "xa_ex_2010";
+        ImGui::InputText("Creature Base Filename", creatureBase, sizeof(creatureBase));
+        ImGui::TextWrapped("e.g. xa_ex_2010 = Soldier. Appends .mdls/.mset. Spawns on top of Sora.");
+        if (BigCallButton("Spawn Enemy")) {
+            QueueDebugAction("spawn_enemy", 0, creatureBase, nullptr);
         }
     } else if (strcmp(current.id, "show_custom_popup") == 0) {
         static char customText[128] = "TEST";
